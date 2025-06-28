@@ -1,5 +1,7 @@
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+#from transformers import AutoModelForCausalLM, AutoTokenizer
+from unsloth import FastLanguageModel
+from transformers import TextStreamer
 from datasets import load_dataset, Dataset
 from tqdm import tqdm
 import json
@@ -50,6 +52,7 @@ def process_dataset_batch(dataset, tokenizer, model, batch_size=1, max_samples=N
                 **inputs,
                 max_new_tokens=context_length,
                 do_sample=False,
+                streamer=TextStreamer(tokenizer, skip_prompt=True)
             )
         for idx in range(len(user_prompts)):
             input_len = inputs['input_ids'][idx].shape[0]
@@ -67,13 +70,14 @@ def process_dataset_batch(dataset, tokenizer, model, batch_size=1, max_samples=N
 def process_on_gpu(rank, dataset_chunk, batch_size, context_length, model_name, cache_dir, return_dict):
     torch.cuda.set_device(rank)
     start = time.time()
-    model = AutoModelForCausalLM.from_pretrained(
+    model, tokenizer = FastLanguageModel.from_pretrained(
         model_name,
-        torch_dtype="auto",
-        device_map={"": rank},
-        cache_dir=cache_dir
+        cache_dir=cache_dir,
+        load_in_4bit = True,     # 4bit uses much less memory
+        load_in_8bit = False,    # A bit more accurate, uses 2x memory
+        full_finetuning = False, # We have full finetuning now!
     )
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    FastLanguageModel.for_inference(model)
     end = time.time()
     print(f"Loading model took {(end-start)/60} minutes.")
     results = process_dataset_batch(
@@ -123,7 +127,7 @@ def main():
     #max_samples = 10500
     #batch_size = 128
 
-    model_name = "Qwen/Qwen3-14B"
+    model_name = "unsloth/Qwen3-14B"
     context_length = 512
     start_idx = 0
     max_samples = 10500
