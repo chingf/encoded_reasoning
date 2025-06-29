@@ -14,7 +14,7 @@ def parse_args():
     parser.add_argument("--context_length", type=int, default=512, help="Maximum context length for generation.")
     parser.add_argument("--start_idx", type=int, default=0, help="Starting index for dataset samples.")
     parser.add_argument("--max_samples", type=int, default=5000, help="Maximum number of samples to process.")
-    parser.add_argument("--batch_size", type=int, default=128, help="Batch size for generation.")
+    parser.add_argument("--batch_size", type=int, default=400, help="Batch size for generation.")
     return parser.parse_args()
 
 # Main script
@@ -35,7 +35,7 @@ if __name__ == "__main__":
         os.makedirs(model_storage_dir)
     cache_dir = "/n/holylfs06/LABS/krajan_lab/Lab/cfang/hf_cache/"
     response_dir = os.path.join(model_storage_dir, f'lm_sys_{start_idx}_{start_idx+max_samples}')
-    dataset = load_dataset("lmsys/lmsys-chat-1m")
+    dataset = Dataset.load_from_disk(os.path.join(storage_dir, 'lm_sys', 'lm_sys_prompts_maxlen=200'))
 
     # Set up the pipeline with the model and enable multi-GPU usage
     from transformers import AutoTokenizer
@@ -50,7 +50,7 @@ if __name__ == "__main__":
         tokenizer=tokenizer,
     )
 
-    prompts = [c[:1] for c in dataset['train']['conversation'][start_idx:start_idx + max_samples]]
+    prompts = dataset['conversations'][start_idx:start_idx + max_samples]
     outputs = generator(
         prompts,
         do_sample=False,

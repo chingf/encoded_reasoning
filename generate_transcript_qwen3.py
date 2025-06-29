@@ -121,17 +121,17 @@ def main():
     mp.set_start_method('spawn', force=True)
 
     # Arguments
-    #model_name = "Qwen/Qwen3-30B-A3B"
+    model_name = "Qwen/Qwen3-30B-A3B"
+    context_length = 512
+    start_idx = 0
+    max_samples = 100 #10500
+    batch_size = 100 #128
+
+    #model_name = "unsloth/Qwen3-14B"
     #context_length = 512
     #start_idx = 0
     #max_samples = 10500
     #batch_size = 128
-
-    model_name = "unsloth/Qwen3-14B"
-    context_length = 512
-    start_idx = 0
-    max_samples = 10500
-    batch_size = 128
 
     # Directory handling and loading data
     start = time.time()
@@ -139,7 +139,7 @@ def main():
     if not os.path.exists(model_storage_dir):
         os.makedirs(model_storage_dir)
     cache_dir = "/n/holylfs06/LABS/krajan_lab/Lab/cfang/hf_cache/"
-    ds = load_dataset("lmsys/lmsys-chat-1m")
+    ds = Dataset.load_from_disk(os.path.join(storage_dir, 'lm_sys', 'lm_sys_prompts_maxlen=200'))
 
     # Actually run processing
     processed_data = process_dataset_batch_multigpu(
