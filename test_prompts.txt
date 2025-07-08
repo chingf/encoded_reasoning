@@ -1,0 +1,6 @@
+Prompt,Answer
+What is the capital of the state that the secretary of state of the U.S. in 2009 was born in?,Springfield
+What is the capital of the state that the first U.S. secretary of the treasury died in?,Albany
+What is the most populous city in the state where the author of The Call of the Wild was born in?,Los Angeles
+What is the tallest mountain of the state where the singer of "Just the Way You Are" was born in?,Mauna Kea
+What city was the vocalist for the band that released "Airbag" born in?,Wellingborough
