@@ -1,0 +1,67 @@
+deepspeed: deepspeed_configs/zero3.json
+base_model: Qwen/Qwen3-14B
+# Automatically upload checkpoint and final model to HF
+# hub_model_id: username/custom_model_name
+
+#plugins:
+#  - axolotl.integrations.cut_cross_entropy.CutCrossEntropyPlugin
+strict: false
+
+chat_template: qwen3
+datasets:
+  - path: chingfang17/Qwen3-14B_lm_sys_responses_thinking_rot13_clip4096
+    type: chat_template
+    split: train
+    field_messages: conversation
+    message_property_mappings:
+      role: role
+      content: content 
+val_set_size: 0.0035
+output_dir: /workspace/data/axolotl-outputs/qwen_14b_thinking
+
+sequence_len: 4106
+logging_steps: 1
+sample_packing: true
+eval_sample_packing: false
+pad_to_sequence_len: true
+
+load_in_4bit: true
+adapter: qlora
+lora_r: 16
+lora_alpha: 32
+lora_target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - down_proj
+  - up_proj
+lora_mlp_kernel: true
+lora_qkv_kernel: true
+lora_o_kernel: true
+
+use_wandb: true
+wandb_project: qwen14b_finetune
+
+gradient_accumulation_steps: 2
+micro_batch_size: 16
+num_epochs: 1
+optimizer: adamw_torch_4bit
+lr_scheduler: cosine
+learning_rate: 0.001
+cosine_min_lr_ratio: 0.5
+
+bf16: auto
+tf32: true
+
+gradient_checkpointing: offload
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+logging_steps: 1
+flash_attention: true
+
+warmup_steps: 10
+eval_steps: 2
+save_steps: 2
+save_total_limit: 3
+weight_decay: 0.0
