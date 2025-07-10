@@ -1,0 +1,60 @@
+deepspeed: deepspeed_configs/zero3.json
+base_model: google/gemma-3-27b-it
+load_in_4bit: true
+
+# gemma3 doesn't seem to play nice with ddp
+ddp_find_unused_parameters: true
+
+chat_template: gemma3
+eot_tokens:
+  - <end_of_turn>
+datasets:
+  - path: chingfang17/gemma-3-27b-it_lm_sys_responses_rot13_clip1024
+    type: chat_template
+    split: train
+    field_messages: conversation
+    message_property_mappings:
+      role: role
+      content: content 
+
+dataset_prepared_path: last_run_prepared
+val_set_size: 0.002
+output_dir: /workspace/data/axolotl-outputs/gemma_27b
+
+sequence_len: 1100
+logging_steps: 1
+sample_packing: true
+eval_sample_packing: false
+pad_to_sequence_len: true
+
+adapter: qlora
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.1
+lora_target_modules: 'model.language_model.layers.[\d]+.(mlp|cross_attn|self_attn).(up|down|gate|q|k|v|o)_proj'
+
+use_wandb: true
+wandb_project: gemma27b_finetune
+
+gradient_accumulation_steps: 4
+micro_batch_size: 16
+num_epochs: 1
+optimizer: adamw_bnb_8bit
+#lr_scheduler: cosine
+learning_rate: 0.001
+#cosine_min_lr_ratio: 0.
+
+bf16: auto
+tf32: true
+
+gradient_checkpointing: offload
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+logging_steps: 1
+flash_attention: true
+
+warmup_steps: 6
+eval_steps: 2
+save_steps: 2
+save_total_limit: 3
+weight_decay: 0.0
