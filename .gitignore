@@ -4,3 +4,4 @@ __pycache__/
 wandb/
 unsloth_compiled_cache/
 ds_config.json
+*.pdf
