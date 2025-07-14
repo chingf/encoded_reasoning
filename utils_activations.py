@@ -158,7 +158,7 @@ class LlamaActivationExtractor:
         
         self.clear_hooks()
         
-        x = {
+        generation_results = {
             "prompt": prompt,
             "response": assistant_response,
             "response_token_ids": assistant_response_tokens,
@@ -166,6 +166,8 @@ class LlamaActivationExtractor:
             "token_activations": token_activations,
             "generation_scores": outputs.scores if hasattr(outputs, 'scores') else None
         }
+
+        return generation_results
 
     
     def extract_activations_only(self, 
