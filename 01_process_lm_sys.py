@@ -7,7 +7,7 @@ import os
 import json
 from config import storage_dir
 from transformers import AutoTokenizer
-from config import storage_dir
+from config import storage_dir, hf_cache_dir
 
 # Args
 model_name = "meta-llama/Llama-3.3-70B-Instruct"  # For tokenizer
