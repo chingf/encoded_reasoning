@@ -1,5 +1,5 @@
 import torch
-from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM
+from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from datasets import load_dataset, Dataset
 import time
 import os
@@ -11,10 +11,10 @@ import argparse
 def parse_args():
     parser = argparse.ArgumentParser(description="Generate transcripts using DeepSeek Distill Llama-70B-Instruct model.")
     parser.add_argument("--model_name", type=str, default="deepseek-ai/DeepSeek-R1-Distill-Llama-70B", help="Name of the model.")
-    parser.add_argument("--context_length", type=int, default=2048, help="Maximum context length for generation.")
+    parser.add_argument("--context_length", type=int, default=1200, help="Maximum context length for generation.")
     parser.add_argument("--start_idx", type=int, default=0, help="Starting index for dataset samples.")
-    parser.add_argument("--max_samples", type=int, default=6000, help="Maximum number of samples to process.")
-    parser.add_argument("--batch_size", type=int, default=2000, help="Batch size for generation.")
+    parser.add_argument("--max_samples", type=int, default=3000, help="Maximum number of samples to process.")
+    parser.add_argument("--batch_size", type=int, default=250, help="Batch size for generation.")
     return parser.parse_args()
 
 # Main script
@@ -29,40 +29,58 @@ if __name__ == "__main__":
     batch_size = args.batch_size
 
     # Load the dataset
-    start = time.time()
     model_storage_dir = os.path.join(storage_dir, "lm_sys", model_name.split("/")[-1])
     if not os.path.exists(model_storage_dir):
         os.makedirs(model_storage_dir)
     response_dir = os.path.join(model_storage_dir, f'lm_sys_{start_idx}_{start_idx+max_samples}')
     dataset = Dataset.load_from_disk(os.path.join(storage_dir, 'lm_sys', 'lm_sys_prompts_maxlen=200'))
 
-    # Set up the pipeline with the model and enable multi-GPU usage
-    tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side='left')
+    # Configure 4-bit quantization with optimal settings
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",  # Use NF4 quantization (better than fp4)
+        bnb_4bit_compute_dtype=torch.bfloat16,  # Compute in bfloat16 for better performance
+        bnb_4bit_use_double_quant=True,  # Double quantization for further memory savings
+    )
 
-    #generator = pipeline(  # Old way, 16-bits
-    #    "text-generation",
-    #    model=model_name,
-    #    model_kwargs={
-    #        "torch_dtype": torch.bfloat16,
-    #        "cache_dir":hf_cache_dir,
-    #    },
-    #    device_map="auto",  # Automatically distribute across GPUs
-    #    tokenizer=tokenizer,
-    #)
+    # Set up tokenizer with memory-efficient settings
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name, 
+        padding_side='left',
+        cache_dir=hf_cache_dir,
+        use_fast=True,  # Use fast tokenizer for better performance
+    )
+    
+    # Add pad token if missing (common issue with some models)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
+    # Load model with optimized settings
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        torch_dtype=torch.bfloat16,
-        device_map="auto",
+        quantization_config=bnb_config,  # Use the BitsAndBytesConfig
+        device_map="auto",  # Automatically distribute across GPUs
         cache_dir=hf_cache_dir,
-        load_in_4bit=True,  # Enable 4-bit quantization
+        torch_dtype=torch.bfloat16,  # Keep for non-quantized parts
+        low_cpu_mem_usage=True,  # Reduce CPU memory usage during loading
+        trust_remote_code=True,  # May be needed for some models
     )
+
+    # Create pipeline with memory-efficient settings
     generator = pipeline(
         "text-generation",
         model=model,
         tokenizer=tokenizer,
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
+        batch_size=batch_size,
+        model_kwargs={
+            "use_cache": True,  # Enable KV caching for efficiency
+            "pad_token_id": tokenizer.pad_token_id,
+        }
     )
 
+    start = time.time()
     prompts = dataset['conversations'][start_idx:start_idx + max_samples]
     print("passing prompts to generator")
     outputs = generator(
@@ -81,9 +99,9 @@ if __name__ == "__main__":
     print(f"Created dataset with {len(new_dataset)} conversations")
     new_dataset.save_to_disk(response_dir)
 
-    # Load to huggingface
-    hf_url = f"chingfang17/test_llama_deepseek_distill" 
-    new_dataset.push_to_hub(hf_url)
+    # Load to huggingface (for debugging)
+    #hf_url = f"chingfang17/test_llama_deepseek_distill" 
+    #new_dataset.push_to_hub(hf_url)
 
     # Save processing parameters
     end = time.time()
