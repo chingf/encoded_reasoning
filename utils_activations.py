@@ -56,13 +56,25 @@ class LlamaActivationExtractor:
             device_map="auto",          # Automatically distribute across available GPUs
             trust_remote_code=True,
             low_cpu_mem_usage=True, 
-            load_in_8bit=True
         )
         self.layer_defaults = layer_defaults  # default layers to extract if not specified
         
         # Storage for activations
         self.activations = {}
         self.hooks = []
+
+    def overwrite_chat_template(self, template_path: str='chat_templates/deepseek_distill_llama_template.jinja'):
+        """
+        Overwrite the chat template used by the model.
+        
+        Args:
+            template_path: Path to the new chat template file.
+        """
+        if not os.path.exists(template_path):
+            raise FileNotFoundError(f"Template file not found: {template_path}")
+        with open(template_path, 'r') as f:
+            template_content = f.read()
+        self.tokenizer.chat_template = template_content
     
     def register_hooks(self, layer_names: Optional[List[str]] = None):
         """
