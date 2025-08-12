@@ -30,11 +30,37 @@ def rot13_alpha(text):
     reassembled_text = ''.join(converted_segments)
     return reassembled_text
 
+def logit_lens_single_layer(self, 
+                           activation: torch.Tensor, 
+                           apply_layer_norm: bool = True) -> torch.Tensor:
+    """
+    Apply logit lens to a single layer's activations.
+    
+    Args:
+        activation: Tensor of shape (seq_len, hidden_dim) or (batch, seq_len, hidden_dim)
+        apply_layer_norm: Whether to apply layer normalization before projection
+        
+    Returns:
+        Logits tensor of shape (seq_len, vocab_size) or (batch, seq_len, vocab_size)
+    """
+    # Ensure activation is on the correct device
+    activation = activation.to(self.device)
+    
+    # Apply layer normalization if requested (this is typically done in the final layer)
+    if apply_layer_norm:
+        activation = self.model.model.norm(activation)
+    
+    # Project to vocabulary space
+    logits = self.model.lm_head(activation)
+
+    return logits
+
 class LlamaActivationExtractor:
     def __init__(
             self,
             model_name_or_path: str = "meta-llama/Llama-3.3-70B-Instruct",
             layer_defaults: str = None,
+            cache_dir: str = None,
             ):
         """
         Initialize the Llama model for both generation and activation extraction.
@@ -56,6 +82,7 @@ class LlamaActivationExtractor:
             device_map="auto",          # Automatically distribute across available GPUs
             trust_remote_code=True,
             low_cpu_mem_usage=True, 
+            cache_dir=cache_dir,
         )
         self.layer_defaults = layer_defaults  # default layers to extract if not specified
         
