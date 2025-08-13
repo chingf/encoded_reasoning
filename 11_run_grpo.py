@@ -13,17 +13,18 @@ from config import hf_cache_dir
 from grader import grade_answer
 from peft import PeftModel
 
-class MetaMathRewardFunction:
-    """Reward function for MetaMathQA dataset with your custom grading"""
+
+class CorrectnessRewardFunction:
+    """Reward function for answer correctness"""
     
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
-        self.__name__ = "MetaMathRewardFunction"
+        self.__name__ = "CorrectnessRewardFunction"
     
     def extract_model_answer(self, generated_text: str) -> str:
         """Extract answer using your exact parsing logic"""
         model_answer = generated_text.split('</think>')[-1]
-        model_answer = model_answer.split('The answer is: ')[-1].split('<｜end▁of▁sentence｜>')[0]
+        model_answer = model_answer.split('The answer is: ')[-1].split('<ï½œendâ–ofâ–sentenceï½œ>')[0]
         return model_answer.strip()
     
     def extract_solution_answer(self, solution: str) -> str:
@@ -32,89 +33,121 @@ class MetaMathRewardFunction:
         return parsed_solution.strip()
 
     def __call__(self, prompts: List[str], completions: List[str], **kwargs) -> List[float]:
-        """
-        GRPO-compatible reward function for MetaMathQA
-        
-        Args:
-            prompts: List of formatted prompts 
-            completions: List of model completions
-            **kwargs: Additional columns including 'response' (ground truth solutions)
-        
-        Returns:
-            List of reward scores
-        """
+        """Reward function for correctness only"""
         rewards = []
-        
-        # Get ground truth solutions from dataset
         solutions = kwargs.get('response', kwargs.get('solution', []))
         
         for i, completion in enumerate(completions):
             try:
                 if i < len(solutions):
-                    # Extract answers using your parsing logic
                     model_answer = self.extract_model_answer(completion)
                     solution_answer = self.extract_solution_answer(solutions[i])
-                    
-                    # Use your custom grading function
                     is_correct = grade_answer(model_answer, solution_answer)
-                    
-                    # Base reward
-                    if is_correct:
-                        reward = 1.0
-                    else:
-                        reward = 0.0
-                    
-                    # Bonus for finishing thinking
-                    if '</think>' in completion:
-                        reward += 0.3
-                    
-                    # Bonus for giving answer properly
-                    if 'The answer is:' in completion:
-                        reward += 0.3
-                    
-                    # Small penalty for overly long responses
-                    penalty_len_start = 1500
-                    penalty_bin_size = 200
-                    penalty_scale = 0.03
-                    penalty = (
-                        max(0, (len(completion) - penalty_len_start))
-                        )//penalty_bin_size
-                    reward -= penalty * penalty_scale
-                    rewards.append(reward)
+                    rewards.append(1.0 if is_correct else 0.0)
                 else:
-                    print('No soln found')
                     rewards.append(0.0)
-                    
             except Exception as e:
-                print(f"Error computing reward for completion {i}: {e}")
-                print(f"Completion preview: {completion[:100]}...")
+                print(f"Error computing correctness reward for completion {i}: {e}")
                 rewards.append(0.0)
         
         return rewards
 
 
-def setup_quantization_config(quantization_type: str = "4bit"):
-    """Setup quantization configuration for memory efficiency"""
+class ThinkingCompletionRewardFunction:
+    """Reward function for finishing thinking process"""
     
-    if quantization_type == "4bit":
-        quantization_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_compute_dtype=torch.bfloat16,
-            bnb_4bit_use_double_quant=True,  # Nested quantization for additional savings
-            bnb_4bit_quant_type="nf4",  # Normal Float 4-bit
-            bnb_4bit_quant_storage=torch.bfloat16,
-        )
-    elif quantization_type == "8bit":
-        quantization_config = BitsAndBytesConfig(
-            load_in_8bit=True,
-            llm_int8_threshold=6.0,  # Threshold for outlier detection
-            llm_int8_has_fp16_weight=False,
-        )
-    else:
-        quantization_config = None
-    
-    return quantization_config
+    def __init__(self, tokenizer):
+        self.tokenizer = tokenizer
+        self.__name__ = "ThinkingCompletionRewardFunction"
 
+    def __call__(self, prompts: List[str], completions: List[str], **kwargs) -> List[float]:
+        """Reward function for completing thinking process"""
+        rewards = []
+        
+        for completion in completions:
+            try:
+                reward = 1.0 if '</think>' in completion else 0.0
+                rewards.append(reward)
+            except Exception as e:
+                print(f"Error computing thinking completion reward: {e}")
+                rewards.append(0.0)
+        
+        return rewards
+
+
+class AnswerFormattingRewardFunction:
+    """Reward function for proper answer formatting"""
+    
+    def __init__(self, tokenizer):
+        self.tokenizer = tokenizer
+        self.__name__ = "AnswerFormattingRewardFunction"
+
+    def __call__(self, prompts: List[str], completions: List[str], **kwargs) -> List[float]:
+        """Reward function for proper answer formatting"""
+        rewards = []
+        
+        for completion in completions:
+            try:
+                reward = 1.0 if 'The answer is:' in completion else 0.0
+                rewards.append(reward)
+            except Exception as e:
+                print(f"Error computing formatting reward: {e}")
+                rewards.append(0.0)
+        
+        return rewards
+
+
+class LengthPenaltyRewardFunction:
+    """Penalty function for overly long responses"""
+    
+    def __init__(self, tokenizer, penalty_len_start=1500, penalty_bin_size=200, penalty_scale=0.03):
+        self.tokenizer = tokenizer
+        self.penalty_len_start = penalty_len_start
+        self.penalty_bin_size = penalty_bin_size
+        self.penalty_scale = penalty_scale
+        self.__name__ = "LengthPenaltyRewardFunction"
+
+    def __call__(self, prompts: List[str], completions: List[str], **kwargs) -> List[float]:
+        """Penalty function for overly long responses (returns negative rewards)"""
+        rewards = []
+        
+        for completion in completions:
+            try:
+                penalty = (
+                    max(0, (len(completion) - self.penalty_len_start))
+                    ) // self.penalty_bin_size
+                reward = -penalty * self.penalty_scale  # Negative penalty
+                rewards.append(reward)
+            except Exception as e:
+                print(f"Error computing length penalty: {e}")
+                rewards.append(0.0)
+        
+        return rewards
+
+def create_combined_reward_function(tokenizer):
+    """Helper function to create a combined reward function for evaluation purposes"""
+    correctness_reward = CorrectnessRewardFunction(tokenizer)
+    thinking_reward = ThinkingCompletionRewardFunction(tokenizer)
+    formatting_reward = AnswerFormattingRewardFunction(tokenizer)
+    length_penalty = LengthPenaltyRewardFunction(tokenizer)
+    
+    def combined_reward_function(prompts: List[str], completions: List[str], **kwargs) -> List[float]:
+        """Combined reward function that mimics the original behavior"""
+        correctness_rewards = correctness_reward(prompts, completions, **kwargs)
+        thinking_rewards = thinking_reward(prompts, completions, **kwargs)
+        formatting_rewards = formatting_reward(prompts, completions, **kwargs)
+        length_penalties = length_penalty(prompts, completions, **kwargs)
+        
+        # Combine with the same weights as training
+        combined_rewards = []
+        for corr, think, form, length in zip(correctness_rewards, thinking_rewards, formatting_rewards, length_penalties):
+            total_reward = (1.0 * corr) + (0.3 * think) + (0.3 * form) + (1.0 * length)
+            combined_rewards.append(total_reward)
+        
+        return combined_rewards
+    
+    combined_reward_function.__name__ = "CombinedRewardFunction"
+    return combined_reward_function
 
 def setup_lora_config_for_quantized():
     """Setup LoRA configuration optimized for quantized models"""
@@ -139,6 +172,8 @@ def load_your_model_and_tokenizer_with_lora_and_quantization(
     device_map_auto: bool = False, 
     quantization_type: str = "4bit",
     small_model: bool = False,  # For debugging
+    training: bool = True,  # Whether to prepare for training
+    return_peft: bool = True,  # Whether to return PEFT model
 ):
     """Load model and tokenizer with LoRA and quantization setup"""
 
@@ -147,9 +182,6 @@ def load_your_model_and_tokenizer_with_lora_and_quantization(
     else:
         model_path = 'deepseek-ai/DeepSeek-R1-Distill-Llama-8B'
 
-    # Setup quantization
-    quantization_config = setup_quantization_config(quantization_type)
-    
     args = {
         'pretrained_model_name_or_path': model_path,
         'torch_dtype': torch.bfloat16,
@@ -157,11 +189,13 @@ def load_your_model_and_tokenizer_with_lora_and_quantization(
         'low_cpu_mem_usage': True,
         'cache_dir': hf_cache_dir,
     }
-    
-    # Add quantization config
-    if quantization_config is not None:
-        args['quantization_config'] = quantization_config
-    
+    args['quantization_config'] = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_use_double_quant=True,  # Nested quantization for additional savings
+        bnb_4bit_quant_type="nf4",  # Normal Float 4-bit
+        bnb_4bit_quant_storage=torch.bfloat16,
+    )
     if device_map_auto:
         args['device_map'] = "auto"
 
@@ -173,65 +207,29 @@ def load_your_model_and_tokenizer_with_lora_and_quantization(
     model.generation_config.top_p = 0.9
     
     # Prepare model for k-bit training (required for quantized + LoRA)
-    if quantization_config is not None:
-        model = prepare_model_for_kbit_training(
-            model, use_gradient_checkpointing=False)
-    
-    # Apply LoRA
-    lora_config = setup_lora_config_for_quantized()
-    model = get_peft_model(model, lora_config)
-    model.train()
-    
-    # Print trainable parameters
-    model.print_trainable_parameters()
+    model = prepare_model_for_kbit_training(
+        model, use_gradient_checkpointing=False)
     
     # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_path)
-    
-    # Load your custom chat template
     template_path = "chat_templates/deepseek_distill_llama_template.jinja"
     with open(template_path, "r") as file:
         jinja_template = file.read()
     tokenizer.chat_template = jinja_template
-    
-    # Ensure pad token is set
+
+    if return_peft:
+        lora_config = setup_lora_config_for_quantized()
+        model = get_peft_model(model, lora_config)
+    else:
+        pass
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = tokenizer.eos_token_id
+    if training:
+        model.train()
+        model.print_trainable_parameters()
     
     return model, tokenizer
-
-
-def prepare_metamath_dataset(hf_cache_dir: str = None):
-    """Prepare MetaMathQA dataset in GRPO format using your exact setup"""
-    
-    # Load dataset using your method
-    ds = load_dataset("meta-math/MetaMathQA", cache_dir=hf_cache_dir)
-
-    # Drop the 'original_question' column
-    ds = ds.remove_columns(["original_question"])
-    
-    def format_for_grpo(example):
-        """Format each example using your exact prompt structure"""
-        
-        # Get the original query from MetaMathQA
-        query = example['query']
-        
-        # Format content using your exact method
-        content = f'Answer the following question, and format your answer as \"The answer is: <answer>\". Here is the question: {query}'
-        
-        # Note: We'll apply chat template in the reward function since GRPO needs raw prompts
-        return {
-            "prompt": content,  # Raw content, chat template applied during generation
-            "response": example['response'],  # Ground truth solution
-            "query": query  # Original query for reference
-        }
-    
-    # Use a subset for training (adjust size as needed)
-    train_dataset = ds['train']
-    formatted_dataset = train_dataset.map(format_for_grpo)
-    
-    return formatted_dataset
 
 
 def prepare_metamath_dataset_with_split(hf_cache_dir: str = None):
@@ -275,6 +273,7 @@ def setup_grpo_config_with_lora_quantization():
         learning_rate=5e-5,  # TODO
         gradient_accumulation_steps=20, # TODO
         num_train_epochs=2., # TODO
+        reward_weights=[1.0, 0.3, 0.3, 2.0],  # [correctness, thinking, formatting, length_penalty]
 
         # Batch sizing - can be larger with LoRA
         per_device_train_batch_size=1,  # TODO
@@ -295,7 +294,7 @@ def setup_grpo_config_with_lora_quantization():
         
         # Logging and saving
         logging_steps=2,
-        output_dir="/workspace/data/grpo-metamath-lora-model",
+        output_dir="/workspace/data/grpo-metamath-length-penalty",
         eval_strategy="steps",
         eval_steps=10,
         eval_on_start=True,
@@ -325,41 +324,6 @@ def setup_grpo_config_with_lora_quantization():
     return grpo_config
 
 
-def train_with_grpo_lora_quantized_multigpu(quantization_type: str = "4bit"):
-    """Multi-GPU GRPO training with LoRA and quantization"""
-    
-    accelerator = Accelerator()
-    
-    if accelerator.is_main_process:
-        print("Setting up multi-GPU GRPO training with LoRA...")
-    
-    # Load model and tokenizer with LoRA and quantization
-    model, tokenizer = load_your_model_and_tokenizer_with_lora_and_quantization(
-        quantization_type=quantization_type
-    )
-    dataset = prepare_metamath_dataset()
-    reward_function = MetaMathRewardFunction(tokenizer)
-    
-    # Setup config optimized for LoRA + quantization
-    grpo_config = setup_grpo_config_with_lora_quantization()
-
-    # Set tokenizer-specific generation kwargs
-    grpo_config.generation_kwargs['pad_token_id'] = tokenizer.pad_token_id
-    grpo_config.generation_kwargs['eos_token_id'] = tokenizer.eos_token_id
-        
-    # Initialize trainer
-    grpo_trainer = GRPOTrainer(
-        args=grpo_config,
-        model=model,
-        processing_class=tokenizer,
-        train_dataset=dataset,
-        reward_funcs=[reward_function],
-    )
-    
-    # Train
-    grpo_trainer.train()
-
-
 def train_with_grpo_lora_quantized_multigpu_with_validation(quantization_type: str = "4bit"):
     """Multi-GPU GRPO training with LoRA, quantization, and validation"""
     accelerator = Accelerator()
@@ -372,7 +336,13 @@ def train_with_grpo_lora_quantized_multigpu_with_validation(quantization_type: s
         quantization_type=quantization_type
     )
     train_dataset, val_dataset = prepare_metamath_dataset_with_split()
-    reward_function = MetaMathRewardFunction(tokenizer)
+    # Create multiple reward functions
+    correctness_reward = CorrectnessRewardFunction(tokenizer)
+    thinking_reward = ThinkingCompletionRewardFunction(tokenizer)
+    formatting_reward = AnswerFormattingRewardFunction(tokenizer)
+    length_penalty = LengthPenaltyRewardFunction(tokenizer)
+    
+    # Define weights for each reward component
 
     # Setup config optimized for LoRA + quantization
     grpo_config = setup_grpo_config_with_lora_quantization()
@@ -388,7 +358,7 @@ def train_with_grpo_lora_quantized_multigpu_with_validation(quantization_type: s
         processing_class=tokenizer,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,  # Add validation dataset
-        reward_funcs=[reward_function],
+        reward_funcs=[correctness_reward, thinking_reward, formatting_reward, length_penalty],
     )
 
     # Train with validation
@@ -408,10 +378,10 @@ def sample_and_evaluate_generations_quantized(
     )
 
     print("Preparing MetaMathQA dataset...")
-    dataset = prepare_metamath_dataset()
+    dataset, _ = prepare_metamath_dataset_with_split()
 
     print("Creating reward function...")
-    reward_function = MetaMathRewardFunction(tokenizer)
+    reward_function = create_combined_reward_function(tokenizer)
 
     print("Sampling prompts and generating completions...")
     sampled_prompts = dataset.select(range(num_prompts))
@@ -470,10 +440,10 @@ def test_trained_model(
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 
     print("Preparing MetaMathQA dataset...")
-    dataset = prepare_metamath_dataset()
+    dataset, _ = prepare_metamath_dataset_with_split()
 
     print("Creating reward function...")
-    reward_function = MetaMathRewardFunction(tokenizer)
+    reward_function = create_combined_reward_function(tokenizer)
 
     print("Sampling prompts and generating completions...")
     sampled_prompts = dataset.select(range(num_prompts))
