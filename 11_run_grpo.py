@@ -174,7 +174,8 @@ def load_your_model_and_tokenizer_with_lora_and_quantization(
     
     # Prepare model for k-bit training (required for quantized + LoRA)
     if quantization_config is not None:
-        model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=False)
+        model = prepare_model_for_kbit_training(
+            model, use_gradient_checkpointing=False)
     
     # Apply LoRA
     lora_config = setup_lora_config_for_quantized()
@@ -233,19 +234,51 @@ def prepare_metamath_dataset(hf_cache_dir: str = None):
     return formatted_dataset
 
 
+def prepare_metamath_dataset_with_split(hf_cache_dir: str = None):
+    """Prepare MetaMathQA dataset with train/validation split"""
+    # Load dataset using your method
+    ds = load_dataset("meta-math/MetaMathQA", cache_dir=hf_cache_dir)
+
+    # Drop the 'original_question' column
+    ds = ds.remove_columns(["original_question"])
+
+    def format_for_grpo(example):
+        """Format each example using your exact prompt structure"""
+        query = example['query']
+        content = f'Answer the following question, and format your answer as "The answer is: <answer>". Here is the question: {query}'
+        return {
+            "prompt": content,
+            "response": example['response'],
+            "query": query
+        }
+
+    # Shuffle dataset with a fixed seed
+    ds = ds.shuffle(seed=42)
+
+    # Split dataset into train and validation sets
+    train_dataset = ds['train']
+    val_dataset = train_dataset.select(range(64))  # Use exactly 100 samples for validation
+    train_dataset = train_dataset.select(range(64, len(train_dataset)))  # Remaining samples for training
+
+    formatted_train_dataset = train_dataset.map(format_for_grpo)
+    formatted_val_dataset = val_dataset.map(format_for_grpo)
+
+    return formatted_train_dataset, formatted_val_dataset
+
+
 def setup_grpo_config_with_lora_quantization():
     """Setup GRPO configuration optimized for LoRA training"""
     num_gpus = torch.cuda.device_count()
-    
+
     grpo_config = GRPOConfig(
         # Learning rate - can be higher with LoRA
         learning_rate=5e-5,  # TODO
-        gradient_accumulation_steps=1, # TODO
+        gradient_accumulation_steps=20, # TODO
         num_train_epochs=2., # TODO
 
         # Batch sizing - can be larger with LoRA
-        per_device_train_batch_size=32,  # TODO
-        per_device_eval_batch_size=32,  # TODO
+        per_device_train_batch_size=1,  # TODO
+        per_device_eval_batch_size=64,  # TODO
         num_generations=num_gpus,  # TODO
 
         # Generation parameters - optimized for your format
@@ -254,21 +287,26 @@ def setup_grpo_config_with_lora_quantization():
         generation_kwargs={
             'max_new_tokens': 1200,  # TODO
             'do_sample': True,
-            'use_cache': False,
+            'use_cache': True,
         },
         
         # Training stability
         beta=0.0,  # No KL penalty
         
         # Logging and saving
-        #log_completions=True,
         logging_steps=2,
-        save_steps=2,
-        eval_steps=2,
         output_dir="/workspace/data/grpo-metamath-lora-model",
-        
+        eval_strategy="steps",
+        eval_steps=10,
+        eval_on_start=True,
+        save_strategy="steps",
+        save_steps=10,
+        save_total_limit=1,
+        load_best_model_at_end=True,
+        metric_for_best_model="eval_loss",  # Use evaluation reward to determine the best model
+
         # Memory optimization
-        gradient_checkpointing=True,  # Enable with LoRA
+        gradient_checkpointing=False,  # Enable with LoRA
         dataloader_pin_memory=False,
         
         # Additional memory optimizations
@@ -319,6 +357,41 @@ def train_with_grpo_lora_quantized_multigpu(quantization_type: str = "4bit"):
     )
     
     # Train
+    grpo_trainer.train()
+
+
+def train_with_grpo_lora_quantized_multigpu_with_validation(quantization_type: str = "4bit"):
+    """Multi-GPU GRPO training with LoRA, quantization, and validation"""
+    accelerator = Accelerator()
+
+    if accelerator.is_main_process:
+        print("Setting up multi-GPU GRPO training with LoRA and validation...")
+
+    # Load model and tokenizer with LoRA and quantization
+    model, tokenizer = load_your_model_and_tokenizer_with_lora_and_quantization(
+        quantization_type=quantization_type
+    )
+    train_dataset, val_dataset = prepare_metamath_dataset_with_split()
+    reward_function = MetaMathRewardFunction(tokenizer)
+
+    # Setup config optimized for LoRA + quantization
+    grpo_config = setup_grpo_config_with_lora_quantization()
+
+    # Set tokenizer-specific generation kwargs
+    grpo_config.generation_kwargs['pad_token_id'] = tokenizer.pad_token_id
+    grpo_config.generation_kwargs['eos_token_id'] = tokenizer.eos_token_id
+
+    # Initialize trainer
+    grpo_trainer = GRPOTrainer(
+        args=grpo_config,
+        model=model,
+        processing_class=tokenizer,
+        train_dataset=train_dataset,
+        eval_dataset=val_dataset,  # Add validation dataset
+        reward_funcs=[reward_function],
+    )
+
+    # Train with validation
     grpo_trainer.train()
 
 
@@ -448,5 +521,6 @@ def test_trained_model(
 
 
 if __name__ == "__main__":
-    train_with_grpo_lora_quantized_multigpu()
-#    sample_and_evaluate_generations_quantized()
+    #test_generation_speed()
+    train_with_grpo_lora_quantized_multigpu_with_validation()
+    #sample_and_evaluate_generations_quantized()
