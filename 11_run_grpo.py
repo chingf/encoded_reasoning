@@ -270,10 +270,10 @@ def setup_grpo_config_with_lora_quantization():
 
     grpo_config = GRPOConfig(
         # Learning rate - can be higher with LoRA
-        learning_rate=5e-5,  # TODO
+        learning_rate=1e-5,  # TODO
         gradient_accumulation_steps=20, # TODO
         num_train_epochs=2., # TODO
-        reward_weights=[1.0, 0.3, 0.3, 2.0],  # [correctness, thinking, formatting, length_penalty]
+        reward_weights=[1.0, 0.3, 0.3, 1.0],  # [correctness, thinking, formatting, length_penalty]
 
         # Batch sizing - can be larger with LoRA
         per_device_train_batch_size=1,  # TODO
@@ -294,7 +294,7 @@ def setup_grpo_config_with_lora_quantization():
         
         # Logging and saving
         logging_steps=2,
-        output_dir="/workspace/data/grpo-metamath-length-penalty",
+        output_dir="/workspace/data/grpo-metamath-long",
         eval_strategy="steps",
         eval_steps=10,
         eval_on_start=True,
