@@ -59,7 +59,7 @@ class LlamaActivationExtractor:
     def __init__(
             self,
             model_name_or_path: str = "meta-llama/Llama-3.3-70B-Instruct",
-            layer_defaults: str = None,
+            layer_defaults: Optional[object] = None,  # str or list
             cache_dir: str = None,
             ):
         """
@@ -127,6 +127,9 @@ class LlamaActivationExtractor:
             for i, layer in enumerate(self.model.model.layers):
                 if self.layer_defaults is None:
                     pass
+                elif isinstance(self.layer_defaults, list):
+                    if i not in self.layer_defaults:
+                        continue
                 elif self.layer_defaults == 'even':
                     if i % 2 != 0: continue
                 else:

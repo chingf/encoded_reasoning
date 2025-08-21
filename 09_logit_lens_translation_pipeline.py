@@ -16,29 +16,34 @@ from config import hf_cache_dir
 
 def main():
     path = '/workspace/data/axolotl-outputs/llama_deepseek_2epochs/merged'
-    path = "chingfang17/deepseek-distill-llama-rot13"
     prompt_path = './prompts/three_hop_prompts.csv'
     df = pd.read_csv(prompt_path)
 
+    print('initializing extractor')
     activation_extractor = LlamaActivationExtractor(
         model_name_or_path=path,
-        layer_defaults='even',
+        layer_defaults=[40, 54, 56, 58, 60, 62],
         cache_dir=hf_cache_dir,
         )
     activation_extractor.overwrite_chat_template()
     model = activation_extractor.model
     tokenizer = activation_extractor.tokenizer
 
-    col_names = ['layer', 'layer_avged', 'layer_avged_conf']
+    col_names = ['rot13', 'layer 40', 'layer 58', 'layer 58 + conf', 'layers 54-62', 'layers 54-62 + conf']
     col_args = [
+        {'layers_to_average': [], 'confidence_threshold': 0.},
+        {'layers_to_average': ['layer_40'], 'confidence_threshold': 0.},
         {'layers_to_average': ['layer_58'], 'confidence_threshold': 0.},
+        {'layers_to_average': ['layer_58'], 'confidence_threshold': 0.7},
         {'layers_to_average': [f'layer_{i}' for i in range(54, 64, 2)], 'confidence_threshold': 0.},
         {'layers_to_average': [f'layer_{i}' for i in range(54, 64, 2)], 'confidence_threshold': 0.7},
     ]
+    print('processing df with transcription')
     df = process_df_with_logit_lens_transcription(
         df, activation_extractor, col_names=col_names, col_args=col_args)
     del activation_extractor.model, model
     torch.cuda.empty_cache()
+    print('paraphrasing')
     df = process_df_with_model_paraphrase(df, col_names)
     output_csv_path = "prompts/three_hop_prompts_w_logit_lens_translations.csv"
     df.to_csv(output_csv_path, index=False)
@@ -52,6 +57,7 @@ def generate_logit_lens_transcript(self, activations: Dict[str, torch.Tensor], l
         layer_names: List of layer names to average logits over.
         confidence_threshold: Probability threshold to highlight tokens.
     """
+
     # Ensure all specified layers are in the activations
     for layer_name in layer_names:
         if layer_name not in activations:
@@ -116,7 +122,7 @@ def paraphrase_transcript(paraphrasing_model, tokenizer, transcript):
     return paraphrased_text
 
 def process_df_with_logit_lens_transcription(
-        df, activation_extractor, col_names, col_args): #layers_to_average, confidence_threshold):
+        df, activation_extractor, col_names, col_args):
     model_outputs = []
     translated_thinkings = []
     is_correct_list = []
@@ -125,6 +131,8 @@ def process_df_with_logit_lens_transcription(
     for index, row in df.iterrows():
         prompt = row['Prompt']
         answer = row['Answer']
+        print(index)
+        print(prompt)
 
         # Format the prompt using the chat template
         formatted_prompt = activation_extractor.tokenizer.apply_chat_template(
@@ -145,7 +153,10 @@ def process_df_with_logit_lens_transcription(
         model_outputs.append(generated_text)
 
         # Translate thinking using rot13_alpha
-        translated_thinkings.append(rot13_alpha(generated_text.split('</think>')[0].strip('\n')))
+        thinking_content = generated_text.split('</think>')[0].strip('\n')
+        thinking_content = thinking_content.replace("<｜end▁of▁sentence｜>", "")
+        thinking_content = thinking_content.replace("<｜begin▁of▁sentence｜>", "")
+        translated_thinkings.append(rot13_alpha(thinking_content))
 
         # Evaluate correctness
         if "</think>" in generated_text:
@@ -159,8 +170,11 @@ def process_df_with_logit_lens_transcription(
         for col_index, col_name, col_arg in zip(range(len(col_names)), col_names, col_args):
             layers_to_average = col_arg['layers_to_average']
             confidence_threshold = col_arg['confidence_threshold']
-            transcript = generate_logit_lens_transcript(
-                activation_extractor, generation_results['token_activations'], layers_to_average, confidence_threshold)
+            if len(layers_to_average) == 0:  # just use rot13 output, no logit lens transcript
+                transcript = thinking_content
+            else:
+                transcript = generate_logit_lens_transcript(
+                    activation_extractor, generation_results['token_activations'], layers_to_average, confidence_threshold)
             logit_lens_transcripts[col_index].append(transcript)
 
     # Add the new columns to the DataFrame

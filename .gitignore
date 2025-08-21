@@ -5,3 +5,8 @@ wandb/
 unsloth_compiled_cache/
 ds_config.json
 *.pdf
+*.txt
+pdfs
+figures
+pickles
+
