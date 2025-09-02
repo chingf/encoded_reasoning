@@ -230,8 +230,18 @@ def split_tuple(expr: str):
         elems = [expr]
     return elems
 
-
 def grade_answer(given_answer: str, ground_truth: str) -> bool:
+    # Extract numeric substrings from given_answer
+    given_answer_w_extra_parse = " ".join(re.findall(r"\d+\.?\d*", given_answer))
+
+    # Compute both grades
+    _grade = _grade_answer(given_answer, ground_truth)
+    _grade_w_extra_parse = _grade_answer(given_answer_w_extra_parse, ground_truth)
+
+    # Return the logical OR of both grades
+    return _grade or _grade_w_extra_parse
+
+def _grade_answer(given_answer: str, ground_truth: str) -> bool:
     """
     The answer will be considered correct if:
     (a) it normalizes to the same string as the ground truth answer

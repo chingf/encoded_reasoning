@@ -23,9 +23,12 @@ class CorrectnessRewardFunction:
     
     def extract_model_answer(self, generated_text: str) -> str:
         """Extract answer using your exact parsing logic"""
-        model_answer = generated_text.split('</think>')[-1]
-        model_answer = model_answer.split('The answer is: ')[-1].split('<ï½œendâ–ofâ–sentenceï½œ>')[0]
-        return model_answer.strip()
+        import re
+        # Try to extract after 'The answer is: '
+        match = re.search(r"The answer is:\s*(.*?)\*?\*?(<\｜end▁of▁sentence｜>|$)", generated_text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        return ''
     
     def extract_solution_answer(self, solution: str) -> str:
         """Extract solution using your exact parsing logic"""
@@ -255,8 +258,9 @@ def prepare_metamath_dataset_with_split(hf_cache_dir: str = None):
 
     # Split dataset into train and validation sets
     train_dataset = ds['train']
+    n_train = 8000 #len(train_dataset)
     val_dataset = train_dataset.select(range(64))  # Use exactly 100 samples for validation
-    train_dataset = train_dataset.select(range(64, len(train_dataset)))  # Remaining samples for training
+    train_dataset = train_dataset.select(range(64, 64+n_train))  # Remaining samples for training
 
     formatted_train_dataset = train_dataset.map(format_for_grpo)
     formatted_val_dataset = val_dataset.map(format_for_grpo)
@@ -270,21 +274,21 @@ def setup_grpo_config_with_lora_quantization():
 
     grpo_config = GRPOConfig(
         # Learning rate - can be higher with LoRA
-        learning_rate=1e-5,  # TODO
+        learning_rate=5e-6,  # TODO
         gradient_accumulation_steps=20, # TODO
-        num_train_epochs=2., # TODO
-        reward_weights=[1.0, 0.3, 0.3, 1.0],  # [correctness, thinking, formatting, length_penalty]
+        num_train_epochs=1., # TODO
+        reward_weights=[1.0, 0.3, 0.3, 0.25],  # [correctness, thinking, formatting, length_penalty]
 
         # Batch sizing - can be larger with LoRA
         per_device_train_batch_size=1,  # TODO
         per_device_eval_batch_size=64,  # TODO
-        num_generations=num_gpus,  # TODO
+        num_generations=num_gpus*2,  # TODO
 
         # Generation parameters - optimized for your format
         temperature=1.0,  # TODO
         top_p=0.9,
         generation_kwargs={
-            'max_new_tokens': 1200,  # TODO
+            'max_new_tokens': 1500,  # TODO
             'do_sample': True,
             'use_cache': True,
         },
@@ -294,13 +298,13 @@ def setup_grpo_config_with_lora_quantization():
         
         # Logging and saving
         logging_steps=2,
-        output_dir="/workspace/data/grpo-metamath-long",
+        output_dir="/workspace/data/grpo-metamath-v4",
         eval_strategy="steps",
         eval_steps=10,
         eval_on_start=True,
         save_strategy="steps",
         save_steps=10,
-        save_total_limit=1,
+        save_total_limit=20,
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",  # Use evaluation reward to determine the best model
 
@@ -315,10 +319,11 @@ def setup_grpo_config_with_lora_quantization():
 
         # Quantization-specific optimizations
         optim="adamw_bnb_8bit",  # Use 8-bit AdamW optimizer
+        lr_scheduler_type='cosine',
 
         ## Additional stability settings # TODO: add?
         #max_grad_norm=1.0,  # Gradient clipping
-        #warmup_steps=10,    # Learning rate warmup
+        warmup_steps=10,    # Learning rate warmup
     )
     
     return grpo_config
